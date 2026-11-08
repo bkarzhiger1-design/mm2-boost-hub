@@ -3,7 +3,32 @@
     Tabs: Main (player stuff), ESP (Players + Coins), Farm (Auto Farm Coins)
 ]]
 
-local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+-- Load WindUI with retries and fallback mirrors (a single HTTP 504 won't break the hub)
+local WINDUI_URLS = {
+    "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua",
+    "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua",
+    "https://cdn.jsdelivr.net/gh/Footagesus/WindUI@main/dist/main.lua",
+}
+
+local WindUI
+for attempt = 1, 3 do
+    for _, url in ipairs(WINDUI_URLS) do
+        local ok, lib = pcall(function()
+            return loadstring(game:HttpGet(url))()
+        end)
+        if ok and lib then
+            WindUI = lib
+            break
+        end
+    end
+    if WindUI then break end
+    task.wait(2)
+end
+
+if not WindUI then
+    warn("[Boost Hub] Could not load WindUI (the download server may be down). Try again in a minute.")
+    return
+end
 
 -- Services -------------------------------------------------------------
 local Players          = game:GetService("Players")
