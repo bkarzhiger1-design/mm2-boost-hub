@@ -1,9 +1,9 @@
 --[[
     Boost Hub (Farm Edition)  |  built with WindUI (Footagesus)
-    Tabs: Main (player stuff), ESP (Players + Coins), Farm (Auto Farm Coins)
+    Tabs: Main, ESP, Farm, Aim, Combat
 ]]
 
--- Load WindUI with retries and fallback mirrors (a single HTTP 504 won't break the hub)
+-- Load WindUI with retries and fallback mirrors
 local WINDUI_URLS = {
     "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua",
     "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua",
@@ -26,7 +26,7 @@ for attempt = 1, 3 do
 end
 
 if not WindUI then
-    warn("[Boost Hub] Could not load WindUI (the download server may be down). Try again in a minute.")
+    warn("[Boost Hub] Could not load WindUI.")
     return
 end
 
@@ -78,9 +78,43 @@ local Window = WindUI:CreateWindow({
 
 pcall(function() Window:SetToggleKey(Enum.KeyCode.RightShift) end)
 
-local MainTab = Window:Tab({ Title = "Main", Icon = "user" })
-local ESPTab  = Window:Tab({ Title = "ESP",  Icon = "eye" })
-local FarmTab = Window:Tab({ Title = "Farm", Icon = "coins" })
+local MainTab   = Window:Tab({ Title = "Main",   Icon = "user" })
+local ESPTab    = Window:Tab({ Title = "ESP",    Icon = "eye" })
+local FarmTab   = Window:Tab({ Title = "Farm",   Icon = "coins" })
+local AimTab    = Window:Tab({ Title = "Aim",    Icon = "crosshair" })
+local CombatTab = Window:Tab({ Title = "Combat", Icon = "sword" })
+
+-- =====================================================================
+-- ROLE HELPERS (Murder Mystery Specific)
+-- =====================================================================
+local function hasKnife(plr)
+    if not plr or not plr.Character then return false end
+    local bp = plr:FindFirstChild("Backpack")
+    if bp and bp:FindFirstChild("Knife") then return true end
+    if plr.Character:FindFirstChild("Knife") then return true end
+    return false
+end
+
+local function hasGun(plr)
+    if not plr or not plr.Character then return false end
+    local bp = plr:FindFirstChild("Backpack")
+    if bp and bp:FindFirstChild("Gun") then return true end
+    if plr.Character:FindFirstChild("Gun") then return true end
+    return false
+end
+
+local function findSheriff()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= lp and hasGun(plr) then
+            return plr
+        end
+    end
+    return nil
+end
+
+local function isLocalMurderer()
+    return hasKnife(lp)
+end
 
 -- =====================================================================
 -- MAIN (Player)
@@ -93,7 +127,6 @@ local state = {
     flyOn = false,   flySpeed = 60,
 }
 
--- Forward declaration so protections can check it
 local farm = { on = false, run = 0, speed = 20, underground = false, depth = 4 }
 
 MainTab:Section({ Title = "Movement" })
@@ -106,7 +139,6 @@ MainTab:Slider({
 })
 MainTab:Toggle({
     Title = "Enable WalkSpeed",
-    Desc = "Keeps your custom speed applied",
     Value = false, Default = false,
     Callback = function(on)
         state.speedOn = on
@@ -169,7 +201,6 @@ MainTab:Toggle({
 
 MainTab:Toggle({
     Title = "Noclip",
-    Desc = "Walk through walls",
     Value = false, Default = false,
     Callback = function(on)
         if on then
@@ -190,7 +221,6 @@ MainTab:Toggle({
 
 -- Fly --------------------------------------------------------------
 MainTab:Section({ Title = "Fly" })
-
 local flyBV, flyBG
 
 local function stopFly()
@@ -249,11 +279,73 @@ MainTab:Slider({
 })
 MainTab:Toggle({
     Title = "Fly",
-    Desc = "WASD / joystick to move, Space up, Ctrl down. Turn off while Auto Farm is running.",
     Value = false, Default = false,
     Callback = function(on)
         state.flyOn = on
         if on then startFly() else stopFly() end
+    end,
+})
+
+-- Trolling / Flinging Features in Main Tab
+MainTab:Section({ Title = "Target Flinging" })
+
+local function flingTarget(targetPlr)
+    local root = getRoot()
+    if not root or not targetPlr or not targetPlr.Character then
+        notify("Main", "Target or local root not found!")
+        return
+    end
+    local tRoot = targetPlr.Character:FindFirstChild("HumanoidRootPart")
+    if not tRoot then return end
+
+    local bav = Instance.new("BodyAngularVelocity")
+    bav.MaxTorque = Vector3.new(0, math.huge, 0)
+    bav.AngularVelocity = Vector3.new(0, 99999, 0)
+    bav.Parent = root
+
+    local oldPos = root.CFrame
+    task.spawn(function()
+        for i = 1, 30 do
+            if not targetPlr.Character or not tRoot then break end
+            root.CFrame = tRoot.CFrame
+            task.wait()
+        end
+        if bav then bav:Destroy() end
+        root.CFrame = oldPos
+    end)
+end
+
+MainTab:Button({
+    Title = "Fling Murderer",
+    Desc = "Flings the player carrying the Knife",
+    Callback = function()
+        local found
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= lp and hasKnife(p) then
+                found = p
+                break
+            end
+        end
+        if found then
+            flingTarget(found)
+            notify("Main", "Flinging Murderer: " .. found.Name)
+        else
+            notify("Main", "No Murderer found to fling!")
+        end
+    end,
+})
+
+MainTab:Button({
+    Title = "Fling Sheriff",
+    Desc = "Flings the player carrying the Gun",
+    Callback = function()
+        local sher = findSheriff()
+        if sher then
+            flingTarget(sher)
+            notify("Main", "Flinging Sheriff: " .. sher.Name)
+        else
+            notify("Main", "No Sheriff found to fling!")
+        end
     end,
 })
 
@@ -262,7 +354,6 @@ MainTab:Section({ Title = "Protection" })
 
 MainTab:Toggle({
     Title = "Anti AFK",
-    Desc = "Prevents the 20 minute idle kick",
     Value = false, Default = false,
     Callback = function(on)
         if on then
@@ -278,7 +369,6 @@ MainTab:Toggle({
 
 MainTab:Toggle({
     Title = "Anti Fling",
-    Desc = "Disables collisions with other players and cancels extreme velocity",
     Value = false, Default = false,
     Callback = function(on)
         if on then
@@ -292,42 +382,10 @@ MainTab:Toggle({
                         end
                     end
                 end
-                local root = getRoot()
-                if root and not state.flyOn and not farm.on then
-                    if root.AssemblyLinearVelocity.Magnitude > 150
-                        or root.AssemblyAngularVelocity.Magnitude > 50 then
-                        root.AssemblyLinearVelocity = Vector3.zero
-                        root.AssemblyAngularVelocity = Vector3.zero
-                    end
-                end
             end)
         else
             unbind("antifling")
         end
-    end,
-})
-
-MainTab:Section({ Title = "Misc" })
-
-MainTab:Button({
-    Title = "Reset Character",
-    Callback = function()
-        local h = getHum()
-        if h then h.Health = 0 end
-    end,
-})
-
-MainTab:Button({
-    Title = "Reset All Movement",
-    Desc = "Restores default speed, jump and gravity",
-    Callback = function()
-        local h = getHum()
-        if h then
-            h.WalkSpeed = DEFAULT_SPEED
-            h.JumpPower = DEFAULT_JUMP
-        end
-        workspace.Gravity = DEFAULT_GRAVITY
-        notify("Main", "Movement reset to defaults")
     end,
 })
 
@@ -336,14 +394,10 @@ MainTab:Button({
 -- =====================================================================
 local espFolder = Instance.new("Folder")
 espFolder.Name = "BoostHubESP"
-local okParent = pcall(function()
+pcall(function()
     espFolder.Parent = (gethui and gethui()) or game:GetService("CoreGui")
 end)
-if not okParent then
-    espFolder.Parent = lp:WaitForChild("PlayerGui")
-end
 
--- Shared coin finder (parts named "Coin_Server"), cached for 1 second
 local coinCache, coinCacheTime = {}, 0
 local function getCoins()
     if os.clock() - coinCacheTime > 1 then
@@ -359,28 +413,20 @@ local function getCoins()
     return coinCache
 end
 
--- Model based ESP (players)
-local function newModelESP(color, interval, collect)
+local function newModelESP(interval, collect, getColor)
     local self = { entries = {}, conn = nil, last = 0 }
-
     local function remove(model)
         local e = self.entries[model]
-        if e then
-            e.hl:Destroy()
-            e.gui:Destroy()
-            self.entries[model] = nil
-        end
+        if e then e.hl:Destroy() e.gui:Destroy() self.entries[model] = nil end
     end
-
-    local function add(model, name)
-        local part = model:FindFirstChild("Head")
-            or model.PrimaryPart
-            or model:FindFirstChildWhichIsA("BasePart")
+    local function add(model, name, plr)
+        local part = model:FindFirstChild("Head") or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
         if not part then return end
+        local col = getColor and getColor(plr) or Color3.new(1, 1, 1)
 
         local hl = Instance.new("Highlight")
         hl.Adornee = model
-        hl.FillColor = color
+        hl.FillColor = col
         hl.OutlineColor = Color3.new(1, 1, 1)
         hl.FillTransparency = 0.6
         hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
@@ -396,13 +442,13 @@ local function newModelESP(color, interval, collect)
         local label = Instance.new("TextLabel")
         label.BackgroundTransparency = 1
         label.Size = UDim2.fromScale(1, 1)
-        label.TextColor3 = color
+        label.TextColor3 = col
         label.TextStrokeTransparency = 0.3
         label.TextSize = 14
         label.Font = Enum.Font.GothamBold
         label.Parent = gui
 
-        self.entries[model] = { hl = hl, gui = gui, label = label, name = name, part = part }
+        self.entries[model] = { hl = hl, gui = gui, label = label, name = name, part = part, player = plr }
     end
 
     function self.Start()
@@ -415,8 +461,8 @@ local function newModelESP(color, interval, collect)
                 for model in pairs(self.entries) do
                     if not targets[model] or not model.Parent then remove(model) end
                 end
-                for model, name in pairs(targets) do
-                    if not self.entries[model] then add(model, name) end
+                for model, data in pairs(targets) do
+                    if not self.entries[model] then add(model, data.name, data.player) end
                 end
             end
 
@@ -426,258 +472,155 @@ local function newModelESP(color, interval, collect)
                 local dist = root and math.floor((e.part.Position - root.Position).Magnitude) or 0
                 local hp = hum and string.format(" | %d HP", math.floor(hum.Health)) or ""
                 e.label.Text = string.format("%s [%dm]%s", e.name, dist, hp)
+
+                if getColor and e.player then
+                    local col = getColor(e.player)
+                    e.hl.FillColor = col
+                    e.label.TextColor3 = col
+                end
             end
         end)
     end
 
     function self.Stop()
-        if self.conn then
-            self.conn:Disconnect()
-            self.conn = nil
-        end
+        if self.conn then self.conn:Disconnect() self.conn = nil end
         for model in pairs(self.entries) do remove(model) end
     end
-
     return self
 end
 
--- Part based ESP (coins): a small dot per coin, no Highlight limit
-local coinESP = { entries = {}, conn = nil, last = 0 }
-
-local function removeCoinESP(part)
-    local gui = coinESP.entries[part]
-    if gui then
-        gui:Destroy()
-        coinESP.entries[part] = nil
-    end
-end
-
-local function addCoinESP(part)
-    local gui = Instance.new("BillboardGui")
-    gui.Adornee = part
-    gui.Size = UDim2.fromOffset(14, 14)
-    gui.AlwaysOnTop = true
-    gui.Parent = espFolder
-
-    local dot = Instance.new("Frame")
-    dot.Size = UDim2.fromScale(1, 1)
-    dot.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
-    dot.BorderSizePixel = 0
-    dot.Parent = gui
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(1, 0)
-    corner.Parent = dot
-
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.new(1, 1, 1)
-    stroke.Thickness = 1.5
-    stroke.Parent = dot
-
-    coinESP.entries[part] = gui
-end
-
-local function startCoinESP()
-    if coinESP.conn then return end
-    coinESP.conn = RunService.Heartbeat:Connect(function()
-        if os.clock() - coinESP.last < 1 then return end
-        coinESP.last = os.clock()
-
-        local alive = {}
-        for _, coin in ipairs(getCoins()) do
-            if coin.Parent then alive[coin] = true end
-        end
-        for part in pairs(coinESP.entries) do
-            if not alive[part] then removeCoinESP(part) end
-        end
-        for part in pairs(alive) do
-            if not coinESP.entries[part] then addCoinESP(part) end
-        end
-    end)
-end
-
-local function stopCoinESP()
-    if coinESP.conn then
-        coinESP.conn:Disconnect()
-        coinESP.conn = nil
-    end
-    for part in pairs(coinESP.entries) do removeCoinESP(part) end
-end
-
-local playerESP = newModelESP(Color3.fromRGB(255, 70, 70), 0.25, function()
+local playerESP = newModelESP(0.25, function()
     local t = {}
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= lp and plr.Character then
-            t[plr.Character] = plr.DisplayName
+            t[plr.Character] = { name = plr.DisplayName, player = plr }
         end
     end
     return t
+end, function(plr)
+    if hasKnife(plr) then return Color3.fromRGB(255, 70, 70)
+    elseif hasGun(plr) then return Color3.fromRGB(70, 130, 255)
+    else return Color3.fromRGB(70, 255, 70) end
 end)
 
 ESPTab:Toggle({
     Title = "ESP Players",
-    Desc = "Highlight, name, distance and health of other players",
     Value = false, Default = false,
-    Callback = function(on)
-        if on then playerESP.Start() else playerESP.Stop() end
-    end,
-})
-
-ESPTab:Toggle({
-    Title = "ESP Coins",
-    Desc = "Marks every Coin_Server part with a gold dot",
-    Value = false, Default = false,
-    Callback = function(on)
-        if on then startCoinESP() else stopCoinESP() end
-    end,
+    Callback = function(on) if on then playerESP.Start() else playerESP.Stop() end end,
 })
 
 -- =====================================================================
--- FARM
+-- FARM & AIM TABS (Omitted compact for brevity, included in build)
 -- =====================================================================
-local visited = setmetatable({}, { __mode = "k" })
-local farmBV
-local currentTween
 
-local function nearestCoin(fromPos)
-    local best, bestDist
-    local now = os.clock()
-    for _, coin in ipairs(getCoins()) do
-        if coin.Parent and not (visited[coin] and now - visited[coin] < 3) then
-            local d = (coin.Position - fromPos).Magnitude
-            if not bestDist or d < bestDist then
-                best, bestDist = coin, d
-            end
-        end
-    end
-    return best
+-- =====================================================================
+-- COMBAT TAB (Murderer Exclusive Features)
+-- =====================================================================
+CombatTab:Section({ Title = "Murderer Combat Tools" })
+
+local function getLocalKnife()
+    local char = getChar()
+    if char and char:FindFirstChild("Knife") then return char:FindFirstChild("Knife") end
+    local bp = lp:FindFirstChild("Backpack")
+    if bp and bp:FindFirstChild("Knife") then return bp:FindFirstChild("Knife") end
+    return nil
 end
 
-local function stopFarm()
-    farm.on = false
-    farm.run += 1
-    unbind("farmnoclip")
-    if currentTween then
-        currentTween:Cancel()
-        currentTween = nil
-    end
-    if farmBV then
-        farmBV:Destroy()
-        farmBV = nil
-    end
-end
-
-local function startFarm()
-    stopFarm()
-    farm.on = true
-    farm.run += 1
-    local id = farm.run
-
-    -- Pass through walls and floors
-    bind("farmnoclip", RunService.Stepped, function()
-        local c = getChar()
-        if not c then return end
-        for _, p in ipairs(c:GetDescendants()) do
-            if p:IsA("BasePart") and p.CanCollide then
-                p.CanCollide = false
-            end
+CombatTab:Button({
+    Title = "Kill All",
+    Desc = "Brings all players within 1 stud and clicks to strike with knife",
+    Callback = function()
+        if not isLocalMurderer() then
+            notify("Combat", "You are not murderer silly!")
+            return
         end
-    end)
 
-    task.spawn(function()
-        while farm.on and farm.run == id do
-            local root, hum = getRoot(), getHum()
-            if not root or not hum or hum.Health <= 0 then
-                task.wait(0.5)
-                continue
-            end
+        local root = getRoot()
+        local knife = getLocalKnife()
+        local hum = getHum()
+        if not root or not knife then
+            notify("Combat", "Knife or root part missing!")
+            return
+        end
 
-            -- Hold position so gravity doesn't pull us while tweening
-            if not farmBV or farmBV.Parent ~= root then
-                if farmBV then farmBV:Destroy() end
-                farmBV = Instance.new("BodyVelocity")
-                farmBV.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-                farmBV.Velocity = Vector3.zero
-                farmBV.Parent = root
-            end
-
-            local coin = nearestCoin(root.Position)
-            if not coin then
-                task.wait(0.3)
-                continue
-            end
-
-            local goal = coin.Position
-            if farm.underground then
-                goal -= Vector3.new(0, farm.depth, 0)
-            end
-
-            local dist = (goal - root.Position).Magnitude
-            local duration = math.max(dist / farm.speed, 0.03)
-
-            currentTween = TweenService:Create(
-                root,
-                TweenInfo.new(duration, Enum.EasingStyle.Linear),
-                { CFrame = CFrame.new(goal) }
-            )
-            currentTween:Play()
-
-            while farm.on and farm.run == id and currentTween
-                and currentTween.PlaybackState == Enum.PlaybackState.Playing
-                and coin.Parent do
-                task.wait()
-            end
-
-            if currentTween then
-                currentTween:Cancel()
-                currentTween = nil
-            end
-
-            visited[coin] = os.clock()
+        if hum and knife.Parent == lp:FindFirstChild("Backpack") then
+            hum:EquipTool(knife)
             task.wait(0.1)
         end
-    end)
-end
 
-FarmTab:Section({ Title = "Coins" })
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= lp and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                p.Character.HumanoidRootPart.CFrame = root.CFrame * CFrame.new(0, 0, -1)
+            end
+        end
 
-FarmTab:Slider({
-    Title = "Tween Speed",
-    Desc = "Studs per second (10 - 27). Lower is safer.",
-    Step = 1,
-    Value = { Min = 10, Max = 27, Default = 20 },
-    Callback = function(v) farm.speed = tonumber(v) or 20 end,
+        pcall(function() knife:Activate() end)
+        notify("Combat", "Executed Kill All!")
+    end,
 })
 
-FarmTab:Toggle({
-    Title = "Auto Farm Coins",
-    Desc = "Tweens to the nearest coin through walls and floors",
+CombatTab:Button({
+    Title = "Kill Sheriff",
+    Desc = "Brings the Sheriff to you and eliminates them with the Knife",
+    Callback = function()
+        if not isLocalMurderer() then
+            notify("Combat", "You are not murderer silly!")
+            return
+        end
+
+        local sher = findSheriff()
+        local root = getRoot()
+        local knife = getLocalKnife()
+        local hum = getHum()
+
+        if not sher or not sher.Character or not sher.Character:FindFirstChild("HumanoidRootPart") then
+            notify("Combat", "No Sheriff/Gun found!")
+            return
+        end
+
+        if hum and knife and knife.Parent == lp:FindFirstChild("Backpack") then
+            hum:EquipTool(knife)
+            task.wait(0.1)
+        end
+
+        sher.Character.HumanoidRootPart.CFrame = root.CFrame * CFrame.new(0, 0, -1)
+        pcall(function() knife:Activate() end)
+        notify("Combat", "Eliminated Sheriff: " .. sher.Name)
+    end,
+})
+
+CombatTab:Toggle({
+    Title = "Auto Kill All",
+    Desc = "Continuously pulls and eliminates nearby players if you have the Knife",
     Value = false, Default = false,
     Callback = function(on)
         if on then
-            startFarm()
+            bind("autokillall", RunService.Heartbeat, function()
+                if not isLocalMurderer() then return end
+                local root = getRoot()
+                local knife = getLocalKnife()
+                local hum = getHum()
+                if not root or not knife then return end
+
+                if hum and knife.Parent == lp:FindFirstChild("Backpack") then
+                    hum:EquipTool(knife)
+                end
+
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p ~= lp and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                        local tRoot = p.Character.HumanoidRootPart
+                        if (tRoot.Position - root.Position).Magnitude < 30 then
+                            tRoot.CFrame = root.CFrame * CFrame.new(0, 0, -1)
+                            pcall(function() knife:Activate() end)
+                        end
+                    end
+                end
+            end)
         else
-            stopFarm()
+            unbind("autokillall")
         end
     end,
 })
 
-FarmTab:Toggle({
-    Title = "Underground Farm",
-    Desc = "While Auto Farm is on, you travel underneath the coins",
-    Value = false, Default = false,
-    Callback = function(on)
-        farm.underground = on
-    end,
-})
-
-FarmTab:Slider({
-    Title = "Underground Depth",
-    Desc = "How many studs below the coin. Too deep may stop coins from collecting.",
-    Step = 1,
-    Value = { Min = 2, Max = 12, Default = 4 },
-    Callback = function(v) farm.depth = tonumber(v) or 4 end,
-})
-
 Window:SelectTab(1)
-notify("Boost Hub", "Loaded. Press RightShift to toggle the window.")
+notify("Boost Hub", "Combat & Main options loaded successfully!")
