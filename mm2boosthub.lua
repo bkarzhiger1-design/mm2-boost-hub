@@ -17,6 +17,7 @@ local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService     = game:GetService("TweenService")
 local VirtualUser      = game:GetService("VirtualUser")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local lp = Players.LocalPlayer
 
@@ -54,7 +55,7 @@ local Window = WindUI:CreateWindow({
     Author = "Boost Hub",
     Folder = "BoostHub",
     Size = UDim2.fromOffset(580, 460),
-    Theme = "Emerald",
+    Theme = "Dark",
 })
 
 pcall(function() Window:SetToggleKey(Enum.KeyCode.RightShift) end)
@@ -250,11 +251,18 @@ MainTab:Toggle({
     Callback = function(on)
         if on then
             bind("antifling", RunService.Stepped, function()
+                local root = getRoot()
                 for _, plr in ipairs(Players:GetPlayers()) do
                     if plr ~= lp and plr.Character then
                         for _, p in ipairs(plr.Character:GetDescendants()) do
                             if p:IsA("BasePart") and p.CanCollide then p.CanCollide = false end
                         end
+                    end
+                end
+                if root and not state.flyOn and not farm.on then
+                    if root.AssemblyLinearVelocity.Magnitude > 150 or root.AssemblyAngularVelocity.Magnitude > 50 then
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
                     end
                 end
             end)
@@ -368,7 +376,6 @@ local function togglePlayerESP(on)
                 end
             end
 
-            -- Remove old
             for model, e in pairs(espEntries) do
                 if not currentModels[model] or not model.Parent then
                     if e.hl then e.hl:Destroy() end
@@ -377,7 +384,6 @@ local function togglePlayerESP(on)
                 end
             end
 
-            -- Add or update
             local root = getRoot()
             for model, data in pairs(currentModels) do
                 local e = espEntries[model]
@@ -431,7 +437,6 @@ ESPTab:Toggle({
     Callback = function(on) togglePlayerESP(on) end,
 })
 
--- Coin ESP
 local coinESPEntries = {}
 local coinESPRunning = false
 local function toggleCoinESP(on)
@@ -582,7 +587,7 @@ FarmTab:Slider({
 })
 
 -- =====================================================================
--- AIM TAB
+-- AIM TAB (REAL USER TAP / SCREEN CLICK FOR SHOT)
 -- =====================================================================
 local function hasTool(plr, toolName)
     local bp = plr:FindFirstChild("Backpack")
@@ -606,24 +611,42 @@ local function shootMurderer()
         notify("Aim", "Murderer not found!")
         return false
     end
+
     local char = lp.Character
     local gun = char and char:FindFirstChild("Gun")
     if not gun then
         local bp = lp:FindFirstChild("Backpack")
         gun = bp and bp:FindFirstChild("Gun")
-        if gun and getHum() then getHum():EquipTool(gun) task.wait(0.25) end
+        if gun and getHum() then
+            getHum():EquipTool(gun)
+            task.wait(0.3)
+        end
     end
+
     gun = lp.Character and lp.Character:FindFirstChild("Gun")
     if gun then
+        -- Aim camera directly at the Murderer's HumanoidRootPart so screen-tap hits them
+        local cam = workspace.CurrentCamera
+        local mRoot = m.Character.HumanoidRootPart
+        if cam and mRoot then
+            cam.CFrame = CFrame.new(cam.CFrame.Position, mRoot.Position)
+        end
+        task.wait(0.05)
+
+        -- Activate gun tool visually and programmatically
         pcall(function()
             gun:Activate()
-            local targetPos = m.Character.HumanoidRootPart.Position
-            if gun:FindFirstChild("RemoteEvent") then
-                gun.RemoteEvent:FireServer(targetPos)
-            elseif gun:FindFirstChild("ToolActivate") then
-                gun.ToolActivate:FireServer(targetPos)
-            end
         end)
+
+        -- Physically simulate screen tap/click for mobile & PC users
+        local vp = cam.ViewportSize
+        local screenCenter = Vector2.new(vp.X / 2, vp.Y / 2)
+        pcall(function()
+            VirtualInputManager:SendMouseButtonEvent(screenCenter.X, screenCenter.Y, 0, true, game, 1)
+            task.wait(0.05)
+            VirtualInputManager:SendMouseButtonEvent(screenCenter.X, screenCenter.Y, 0, false, game, 1)
+        end)
+
         notify("Aim", "Shot Murderer!")
         return true
     else
@@ -697,20 +720,24 @@ AimTab:Toggle({
 })
 
 -- =====================================================================
--- COMBAT TAB
+-- COMBAT TAB (VISUAL TELEPORT & REAL SCREEN TAP FOR YOU)
 -- =====================================================================
 local function executeKillAll()
     if not hasTool(lp, "Knife") then
         notify("Combat", "You are not murderer silly!")
         return false
     end
+
     local root = getRoot()
     local char = lp.Character
     local knife = char and char:FindFirstChild("Knife")
     if not knife then
         local bp = lp:FindFirstChild("Backpack")
         knife = bp and bp:FindFirstChild("Knife")
-        if knife and getHum() then getHum():EquipTool(knife) task.wait(0.2) end
+        if knife and getHum() then
+            getHum():EquipTool(knife)
+            task.wait(0.2)
+        end
     end
     knife = lp.Character and lp.Character:FindFirstChild("Knife")
     if not knife then
@@ -718,17 +745,36 @@ local function executeKillAll()
         return false
     end
 
+    -- Visually bring and tap for each player
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= lp and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
             local targetRoot = plr.Character.HumanoidRootPart
             if root then
-                root.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 1)
+                -- Step 1: Visually bring player to 1 stud in front of you (or teleport you directly to them)
+                root.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 1.5)
+                task.wait(0.08)
+
+                -- Step 2: Activate knife tool
+                pcall(function()
+                    knife:Activate()
+                end)
+
+                -- Step 3: Simulate real screen tap/click for you so the game registers the stab
+                local cam = workspace.CurrentCamera
+                if cam then
+                    local vp = cam.ViewportSize
+                    local screenCenter = Vector2.new(vp.X / 2, vp.Y / 2)
+                    pcall(function()
+                        VirtualInputManager:SendMouseButtonEvent(screenCenter.X, screenCenter.Y, 0, true, game, 1)
+                        task.wait(0.04)
+                        VirtualInputManager:SendMouseButtonEvent(screenCenter.X, screenCenter.Y, 0, false, game, 1)
+                    end)
+                end
                 task.wait(0.05)
-                pcall(function() knife:Activate() end)
             end
         end
     end
-    notify("Combat", "Kill All executed!")
+    notify("Combat", "Kill All executed visually!")
     return true
 end
 
@@ -743,20 +789,40 @@ local function executeKillSheriff()
     if not knife then
         local bp = lp:FindFirstChild("Backpack")
         knife = bp and bp:FindFirstChild("Knife")
-        if knife and getHum() then getHum():EquipTool(knife) task.wait(0.2) end
+        if knife and getHum() then
+            getHum():EquipTool(knife)
+            task.wait(0.2)
+        end
     end
     knife = lp.Character and lp.Character:FindFirstChild("Knife")
 
     local sheriff = nil
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= lp and hasTool(plr, "Gun") then sheriff = plr break end
+        if plr ~= lp and hasTool(plr, "Gun") then
+            sheriff = plr
+            break
+        end
     end
 
     if sheriff and sheriff.Character and sheriff.Character:FindFirstChild("HumanoidRootPart") and root and knife then
-        root.CFrame = sheriff.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 1)
-        task.wait(0.05)
+        local targetRoot = sheriff.Character.HumanoidRootPart
+        root.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 1.5)
+        task.wait(0.08)
+
         pcall(function() knife:Activate() end)
-        notify("Combat", "Killed Sheriff!")
+
+        local cam = workspace.CurrentCamera
+        if cam then
+            local vp = cam.ViewportSize
+            local screenCenter = Vector2.new(vp.X / 2, vp.Y / 2)
+            pcall(function()
+                VirtualInputManager:SendMouseButtonEvent(screenCenter.X, screenCenter.Y, 0, true, game, 1)
+                task.wait(0.04)
+                VirtualInputManager:SendMouseButtonEvent(screenCenter.X, screenCenter.Y, 0, false, game, 1)
+            end)
+        end
+
+        notify("Combat", "Killed Sheriff visually!")
         return true
     else
         notify("Combat", "Sheriff not found or missing knife!")
