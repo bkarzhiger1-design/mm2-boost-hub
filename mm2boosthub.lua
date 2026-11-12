@@ -3,27 +3,11 @@
     Tabs: Main, ESP, Farm, Aim, Combat
 ]]
 
--- Load WindUI safely with fallback mirrors
-local WindUI
-local success, err = pcall(function()
-    local urls = {
-        "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua",
-        "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua",
-        "https://cdn.jsdelivr.net/gh/Footagesus/WindUI@main/dist/main.lua",
-    }
-    for _, url in ipairs(urls) do
-        local ok, lib = pcall(function()
-            return loadstring(game:HttpGet(url))()
-        end)
-        if ok and lib then
-            return lib
-        end
-    end
-    error("All WindUI URLs failed to load.")
-end)
+-- Load WindUI using the standard clean loadstring
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
-if not success or not WindUI then
-    warn("[Boost Hub] Failed to load WindUI: " .. tostring(err))
+if not WindUI then
+    warn("[Boost Hub] Failed to load WindUI.")
     return
 end
 
@@ -634,7 +618,6 @@ local function shootMurderer()
         pcall(function()
             gun:Activate()
             local targetPos = m.Character.HumanoidRootPart.Position
-            -- Simulate tap/click
             if gun:FindFirstChild("RemoteEvent") then
                 gun.RemoteEvent:FireServer(targetPos)
             elseif gun:FindFirstChild("ToolActivate") then
@@ -672,7 +655,7 @@ AimTab:Toggle({
 
 AimTab:Button({
     Title = "Auto Claim Gun",
-    Desc = "Teleports toDroppedGun part",
+    Desc = "Teleports to DroppedGun part",
     Callback = function()
         local root = getRoot()
         local droppedGun
@@ -741,9 +724,7 @@ local function executeKillAll()
             if root then
                 root.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 1)
                 task.wait(0.05)
-                pcall(function()
-                    knife:Activate()
-                end)
+                pcall(function() knife:Activate() end)
             end
         end
     end
