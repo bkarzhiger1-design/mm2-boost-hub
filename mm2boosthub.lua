@@ -12,12 +12,13 @@ if not WindUI then
 end
 
 -- Services
-local Players          = game:GetService("Players")
-local RunService       = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local TweenService     = game:GetService("TweenService")
-local VirtualUser      = game:GetService("VirtualUser")
+local Players             = game:GetService("Players")
+local RunService          = game:GetService("RunService")
+local UserInputService    = game:GetService("UserInputService")
+local TweenService        = game:GetService("TweenService")
+local VirtualUser         = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
+local PathfindingService  = game:GetService("PathfindingService")
 
 local lp = Players.LocalPlayer
 
@@ -55,7 +56,7 @@ local Window = WindUI:CreateWindow({
     Author = "Boost Hub",
     Folder = "BoostHub",
     Size = UDim2.fromOffset(580, 460),
-    Theme = "Dark",
+    Theme = "Emerald",
 })
 
 pcall(function() Window:SetToggleKey(Enum.KeyCode.RightShift) end)
@@ -75,7 +76,15 @@ local state = {
     jumpOn = false,  jump = 100,
     flyOn = false,   flySpeed = 60,
 }
-local farm = { on = false, run = 0, speed = 20, underground = false, depth = 4 }
+local farm = {
+    on = false,
+    run = 0,
+    speed = 20,
+    underground = false,
+    depth = 4,
+    pathfind = false,
+    pathfindSpeed = 20
+}
 
 MainTab:Section({ Title = "Movement" })
 MainTab:Slider({
@@ -485,7 +494,7 @@ ESPTab:Toggle({
 })
 
 -- =====================================================================
--- FARM
+-- FARM (INCLUDING PATHFIND AUTO FARM DEPENDENT ON AUTO COLLECT COINS)
 -- =====================================================================
 local visited = setmetatable({}, { __mode = "k" })
 local farmBV, currentTween
@@ -513,6 +522,13 @@ local function startFarm()
     end)
 
     task.spawn(function()
+        local path = PathfindingService:CreatePath({
+            AgentRadius = 2,
+            AgentHeight = 5,
+            AgentCanJump = true,
+            WaypointSpacing = 4
+        })
+
         while farm.on and farm.run == id do
             local root, hum = getRoot(), getHum()
             if not root or not hum or hum.Health <= 0 then
@@ -520,17 +536,13 @@ local function startFarm()
                 continue
             end
 
-            if not farmBV or farmBV.Parent ~= root then
-                if farmBV then farmBV:Destroy() end
-                farmBV = Instance.new("BodyVelocity")
-                farmBV.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-                farmBV.Velocity = Vector3.zero
-                farmBV.Parent = root
-            end
-
+            -- Gather available coins not recently visited
+            local coins = getCoins()
             local best, bestDist
             local now = os.clock()
-            for _, coin in ipairs(getCoins()) do
+
+            -- Sort or pick nearest valid coin
+            for _, coin in ipairs(coins) do
                 if coin.Parent and not (visited[coin] and now - visited[coin] < 3) then
                     local d = (coin.Position - root.Position).Magnitude
                     if not bestDist or d < bestDist then
@@ -544,19 +556,93 @@ local function startFarm()
                 continue
             end
 
-            local goal = best.Position
-            if farm.underground then goal -= Vector3.new(0, farm.depth, 0) end
+            -- Check if PathFind Auto Farm is enabled
+            if farm.pathfind then
+                hum.WalkSpeed = farm.pathfindSpeed
+                local success, errorMessage = pcall(function()
+                    path:ComputeAsync(root.Position, best.Position)
+                end)
 
-            local dist = (goal - root.Position).Magnitude
-            currentTween = TweenService:Create(root, TweenInfo.new(math.max(dist / farm.speed, 0.03), Enum.EasingStyle.Linear), { CFrame = CFrame.new(goal) })
-            currentTween:Play()
+                if success and path.Status == Enum.PathStatus.Success then
+                    local waypoints = path:GetWaypoints()
+                    local reachedCoin = false
 
-            while farm.on and farm.run == id and currentTween and currentTween.PlaybackState == Enum.PlaybackState.Playing and best.Parent do
-                task.wait()
+                    for _, waypoint in ipairs(waypoints) do
+                        if not farm.on or farm.run ~= id or not best.Parent then break end
+                        hum:MoveTo(waypoint.Position)
+
+                        if waypoint.Action == Enum.PathWaypointAction.Jump then
+                            hum:ChangeState(Enum.HumanoidStateType.Jumping)
+                        end
+
+                        -- Wait until reached waypoint or timeout
+                        local timeout = os.clock() + 1.5
+                        while os.clock() < timeout and farm.on and farm.run == id and best.Parent do
+                            if (root.Position - waypoint.Position).Magnitude < 3 then
+                                break
+                            end
+                            task.wait(0.05)
+                        end
+
+                        if (root.Position - best.Position).Magnitude < 4 then
+                            reachedCoin = true
+                            break
+                        end
+                    end
+
+                    if reachedCoin then
+                        visited[best] = os.clock()
+                    else
+                        -- Fallback: mark coin as visited or try another coin if pathfinding failed / got stuck
+                        visited[best] = os.clock()
+                    end
+                else
+                    -- Fallback to direct tweening if pathfinding fails to compute
+                    if not farmBV or farmBV.Parent ~= root then
+                        if farmBV then farmBV:Destroy() end
+                        farmBV = Instance.new("BodyVelocity")
+                        farmBV.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+                        farmBV.Velocity = Vector3.zero
+                        farmBV.Parent = root
+                    end
+
+                    local goal = best.Position
+                    if farm.underground then goal -= Vector3.new(0, farm.depth, 0) end
+                    local dist = (goal - root.Position).Magnitude
+                    currentTween = TweenService:Create(root, TweenInfo.new(math.max(dist / farm.speed, 0.03), Enum.EasingStyle.Linear), { CFrame = CFrame.new(goal) })
+                    currentTween:Play()
+
+                    while farm.on and farm.run == id and currentTween and currentTween.PlaybackState == Enum.PlaybackState.Playing and best.Parent do
+                        task.wait()
+                    end
+                    if currentTween then currentTween:Cancel() currentTween = nil end
+                    visited[best] = os.clock()
+                end
+            else
+                -- Standard Tween Auto Farm
+                if not farmBV or farmBV.Parent ~= root then
+                    if farmBV then farmBV:Destroy() end
+                    farmBV = Instance.new("BodyVelocity")
+                    farmBV.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+                    farmBV.Velocity = Vector3.zero
+                    farmBV.Parent = root
+                end
+
+                local goal = best.Position
+                if farm.underground then goal -= Vector3.new(0, farm.depth, 0) end
+
+                local dist = (goal - root.Position).Magnitude
+                currentTween = TweenService:Create(root, TweenInfo.new(math.max(dist / farm.speed, 0.03), Enum.EasingStyle.Linear), { CFrame = CFrame.new(goal) })
+                currentTween:Play()
+
+                while farm.on and farm.run == id and currentTween and currentTween.PlaybackState == Enum.PlaybackState.Playing and best.Parent do
+                    task.wait()
+                end
+
+                if currentTween then currentTween:Cancel() currentTween = nil end
+                visited[best] = os.clock()
             end
 
-            if currentTween then currentTween:Cancel() currentTween = nil end
-            visited[best] = os.clock()
             task.wait(0.1)
         end
     end)
@@ -572,8 +658,32 @@ FarmTab:Slider({
 FarmTab:Toggle({
     Title = "Auto Farm Coins",
     Value = false, Default = false,
-    Callback = function(on) if on then startFarm() else stopFarm() end end,
+    Callback = function(on)
+        if on then
+            startFarm()
+        else
+            stopFarm()
+        end
+    end,
 })
+
+FarmTab:Section({ Title = "PathFind Auto Farm Settings" })
+FarmTab:Toggle({
+    Title = "PathFind Auto Farm",
+    Desc = "Uses Pathfinding (Requires Auto Collect Coins enabled)",
+    Value = false, Default = false,
+    Callback = function(on)
+        farm.pathfind = on
+    end,
+})
+FarmTab:Slider({
+    Title = "PathFind Speed",
+    Step = 1,
+    Value = { Min = 15, Max = 25, Default = 20 },
+    Callback = function(v) farm.pathfindSpeed = tonumber(v) or 20 end,
+})
+
+FarmTab:Section({ Title = "Underground Settings" })
 FarmTab:Toggle({
     Title = "Underground Farm",
     Value = false, Default = false,
@@ -625,7 +735,6 @@ local function shootMurderer()
 
     gun = lp.Character and lp.Character:FindFirstChild("Gun")
     if gun then
-        -- Aim camera directly at the Murderer's HumanoidRootPart so screen-tap hits them
         local cam = workspace.CurrentCamera
         local mRoot = m.Character.HumanoidRootPart
         if cam and mRoot then
@@ -633,12 +742,10 @@ local function shootMurderer()
         end
         task.wait(0.05)
 
-        -- Activate gun tool visually and programmatically
         pcall(function()
             gun:Activate()
         end)
 
-        -- Physically simulate screen tap/click for mobile & PC users
         local vp = cam.ViewportSize
         local screenCenter = Vector2.new(vp.X / 2, vp.Y / 2)
         pcall(function()
@@ -745,21 +852,17 @@ local function executeKillAll()
         return false
     end
 
-    -- Visually bring and tap for each player
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= lp and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
             local targetRoot = plr.Character.HumanoidRootPart
             if root then
-                -- Step 1: Visually bring player to 1 stud in front of you (or teleport you directly to them)
                 root.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 1.5)
                 task.wait(0.08)
 
-                -- Step 2: Activate knife tool
                 pcall(function()
                     knife:Activate()
                 end)
 
-                -- Step 3: Simulate real screen tap/click for you so the game registers the stab
                 local cam = workspace.CurrentCamera
                 if cam then
                     local vp = cam.ViewportSize
