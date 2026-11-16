@@ -1,5 +1,5 @@
 --[[
-    Boost Hub (Complete Edition) | built with WindUI
+    Boost Hub (Complete Edition with Panda Auth) | built with WindUI
     Tabs: Main, ESP, Farm, Aim, Combat
 ]]
 
@@ -49,7 +49,7 @@ local function bind(name, signal, fn)
     conns[name] = signal:Connect(fn)
 end
 
--- Window Setup with Emerald Theme
+-- Window Setup with Panda Auth Key System and Emerald Theme
 local Window = WindUI:CreateWindow({
     Title = "Boost Hub",
     Icon = "rocket",
@@ -57,6 +57,15 @@ local Window = WindUI:CreateWindow({
     Folder = "BoostHub",
     Size = UDim2.fromOffset(580, 460),
     Theme = "Emerald",
+    KeySystem = {
+        Note = "Enter your Panda Auth key",
+        API = {
+            {
+                Type = "pandadevelopment",
+                ServiceId = "boosthub",
+            },
+        },
+    },
 })
 
 pcall(function() Window:SetToggleKey(Enum.KeyCode.RightShift) end)
